@@ -15,8 +15,10 @@
 #define DEFAULT_IO "/dev/null"
 #define PROMPT ": "
 #define HOME "HOME"
+#define EXITED_MESSAGE "exit value"
+#define TERMINATED_MESSAGE "terminated by signal"
 
-typedef struct
+typedef struct Command
 {
     // Last value in args array passed to execvp must be null pointer
     char *args[MAX_NUM_ARGS + 1];
@@ -26,18 +28,23 @@ typedef struct
 } Command;
 
 // Global variables
-pid_t childProcesses[MAX_NUM_CHILD_PROCESSES];
+static pid_t childProcesses[MAX_NUM_CHILD_PROCESSES];
+static char statusMessage[25];
 
 // Function prototypes
 void getRawInput(char *);
 void parseCommand(char *, Command *);
 void cleanUpChildProcesses();
 void changeDirectory(char *);
+void printStatus();
 void executeCommand(Command *);
 void printDiagnosticArgsParsingResults(Command *);
 
 int main(void)
 {
+    // Initialize default status message
+    sprintf(statusMessage, "%s %d", EXITED_MESSAGE, 0);
+
     while (1)
     {
         // Print command prompt
@@ -74,6 +81,11 @@ int main(void)
         else if (strcmp(firstArg, CHANGE_DIRECTORY) == 0)
         {
             changeDirectory(command->args[1]);
+        }
+
+        else if (strcmp(firstArg, STATUS) == 0)
+        {
+            printStatus();
         }
 
         // Execute non-empty, non-commented command
@@ -167,6 +179,12 @@ void changeDirectory(char *path)
     }
 }
 
+void printStatus()
+{
+    fprintf(stdout, "%s\n", statusMessage);
+    fflush(stdout);
+}
+
 void executeCommand(Command *command)
 {
     int childStatus;
@@ -200,15 +218,16 @@ void executeCommand(Command *command)
         // printf("PARENT(%d): child(%d) terminated. Exiting\n", getpid(), spawnPid);
 
 
-        // if(WIFEXITED(childStatus))
-        // {
-		// 	printf("Child %d exited normally with status %d\n", spawnPid, WEXITSTATUS(childStatus));
-		// }
-        // else
-        // {
-		// 	printf("Child %d exited abnormally due to signal %d\n", spawnPid, WTERMSIG(childStatus));
-        //     exit(1);
-		// }
+        if (WIFEXITED(childStatus))
+        {
+			// printf("Child %d exited normally with status %d\n", spawnPid, WEXITSTATUS(childStatus));
+            sprintf(statusMessage, "%s %d", EXITED_MESSAGE, WEXITSTATUS(childStatus));
+		}
+        else
+        {
+			// printf("Child %d exited abnormally due to signal %d\n", spawnPid, WTERMSIG(childStatus));
+            sprintf(statusMessage, "%s %d", TERMINATED_MESSAGE, WTERMSIG(childStatus));
+		}
         break;
     }
 }
