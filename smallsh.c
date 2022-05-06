@@ -4,7 +4,7 @@
 #include <unistd.h>
 #include <sys/types.h>
 #include <sys/wait.h>
-#include <errno.h>
+#include <signal.h>
 
 #define MAX_COMMAND_LENGTH 2048
 #define MAX_NUM_ARGS 512
@@ -31,6 +31,7 @@ pid_t childProcesses[MAX_NUM_CHILD_PROCESSES];
 // Function prototypes
 void getRawInput(char *);
 void parseCommand(char *, Command *);
+void cleanUpChildProcesses();
 void changeDirectory(char *);
 void executeCommand(Command *);
 void printDiagnosticArgsParsingResults(Command *);
@@ -58,21 +59,25 @@ int main(void)
 
         // printDiagnosticArgsParsingResults(command);
 
-        // Handle blank lines and comments
-        if (command->args[0] == NULL || command->args[0][0] == '#')
+        char *firstArg = command->args[0];
+
+        // Handle exit
+        if (strcmp(firstArg, EXIT) == 0)
         {
+            cleanUpChildProcesses();
             free(userInput);
             free(command);
-            continue;
+            exit(0);
         }
 
         // Handle cd
-        else if (strcmp(command->args[0], CHANGE_DIRECTORY) == 0)
+        else if (strcmp(firstArg, CHANGE_DIRECTORY) == 0)
         {
             changeDirectory(command->args[1]);
         }
 
-        else
+        // Execute non-empty, non-commented command
+        else if (firstArg != NULL && command->args[0][0] != '#')
         {
             executeCommand(command);
         }
@@ -135,6 +140,18 @@ void parseCommand(char *userInput, Command *command)
     }
 }
 
+void cleanUpChildProcesses()
+{
+    // Clean up child processes
+    for (pid_t i = 0; i < MAX_NUM_CHILD_PROCESSES; i++)
+    {
+        if (childProcesses[i] != 0)
+        {
+            kill(childProcesses[i], SIGKILL);
+        }
+    }
+}
+
 void changeDirectory(char *path)
 {
     // Change to home directory if no path is specified
@@ -175,12 +192,23 @@ void executeCommand(Command *command)
         // Add child process to first empty array index
         while (childProcesses[childProcessIterator] != 0 && childProcessIterator < MAX_NUM_CHILD_PROCESSES)
         {
-            childProcessIterator;
+            childProcessIterator++;
         }
         childProcesses[childProcessIterator] = spawnPid;
 
         spawnPid = waitpid(spawnPid, &childStatus, command->runInBackground ? WNOHANG : 0);
         // printf("PARENT(%d): child(%d) terminated. Exiting\n", getpid(), spawnPid);
+
+
+        // if(WIFEXITED(childStatus))
+        // {
+		// 	printf("Child %d exited normally with status %d\n", spawnPid, WEXITSTATUS(childStatus));
+		// }
+        // else
+        // {
+		// 	printf("Child %d exited abnormally due to signal %d\n", spawnPid, WTERMSIG(childStatus));
+        //     exit(1);
+		// }
         break;
     }
 }
