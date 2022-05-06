@@ -7,6 +7,7 @@
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <signal.h>
+#include <errno.h>
 
 #define MAX_COMMAND_LENGTH 2048
 #define MAX_NUM_ARGS 512
@@ -170,7 +171,12 @@ void cleanUpChildProcesses()
     {
         if (childProcesses[i] != 0)
         {
-            kill(childProcesses[i], SIGKILL);
+            // Ignore errors from zombie and recently terminated processes
+            if (kill(childProcesses[i], SIGKILL) && errno != ESRCH)
+            {
+                perror("kill");
+                exit(1);
+            }
         }
     }
 }
