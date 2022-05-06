@@ -2,7 +2,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <fcntl.h>
 #include <sys/types.h>
+#include <sys/stat.h>
 #include <sys/wait.h>
 #include <signal.h>
 
@@ -38,6 +40,7 @@ void cleanUpChildProcesses();
 void changeDirectory(char *);
 void printStatus();
 void executeCommand(Command *);
+void redirectIO(Command *);
 void printDiagnosticArgsParsingResults(Command *);
 
 int main(void)
@@ -68,7 +71,7 @@ int main(void)
 
         char *firstArg = command->args[0];
 
-        // Handle exit
+        // Handle exit command
         if (strcmp(firstArg, EXIT) == 0)
         {
             cleanUpChildProcesses();
@@ -77,12 +80,13 @@ int main(void)
             exit(0);
         }
 
-        // Handle cd
+        // Handle cd command
         else if (strcmp(firstArg, CHANGE_DIRECTORY) == 0)
         {
             changeDirectory(command->args[1]);
         }
 
+        // Handle status command
         else if (strcmp(firstArg, STATUS) == 0)
         {
             printStatus();
@@ -150,6 +154,13 @@ void parseCommand(char *userInput, Command *command)
             i++;
         }
     }
+
+    // Set default I/O path for background process if necessary
+    if (command->runInBackground)
+    {
+        command->inputFile = command->inputFile ? command->inputFile : DEFAULT_IO;
+        command->outputFile = command->outputFile ? command->outputFile : DEFAULT_IO;
+    }
 }
 
 void cleanUpChildProcesses()
@@ -201,8 +212,13 @@ void executeCommand(Command *command)
 
     // In child process
     case 0:
+        // Redirect I/O
+        redirectIO(command);
+
         execvp(command->args[0], command->args);
-        perror("execv");
+        
+        // Only executes on error
+        perror("execvp");
         exit(1);
         break;
     // In parent process
@@ -229,6 +245,41 @@ void executeCommand(Command *command)
             sprintf(statusMessage, "%s %d", TERMINATED_MESSAGE, WTERMSIG(childStatus));
 		}
         break;
+    }
+}
+
+void redirectIO(Command *command)
+{
+    if (command->inputFile)
+    {
+        int inputFD = open(command->inputFile, O_RDONLY);
+        if (inputFD == -1)
+        {
+            perror("open");
+            exit(1);
+        }
+
+        if (dup2(inputFD, STDIN_FILENO) == -1)
+        {
+            perror("dup2");
+            exit(1);
+        }
+    }
+
+    if (command->outputFile)
+    {
+        int outputFD = open(command->outputFile, O_CREAT | O_WRONLY | O_TRUNC, S_IRUSR | S_IWUSR | S_IRGRP);
+        if (outputFD == -1)
+        {
+            perror("open");
+            exit(1);
+        }
+
+        if (dup2(outputFD, STDOUT_FILENO) == -1)
+        {
+            perror("dup2");
+            exit(1);
+        }
     }
 }
 
