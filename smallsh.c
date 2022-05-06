@@ -8,6 +8,7 @@
 
 #define MAX_COMMAND_LENGTH 2048
 #define MAX_NUM_ARGS 512
+#define MAX_NUM_CHILD_PROCESSES 500
 #define CHANGE_DIRECTORY "cd"
 #define STATUS "status"
 #define EXIT "exit"
@@ -24,11 +25,14 @@ typedef struct
     _Bool runInBackground;
 } Command;
 
+// Global variables
+pid_t childProcesses[MAX_NUM_CHILD_PROCESSES];
+
 // Function prototypes
 void getRawInput(char *);
 void parseCommand(char *, Command *);
 void changeDirectory(char *);
-void executeCommand(Command*);
+void executeCommand(Command *);
 void printDiagnosticArgsParsingResults(Command *);
 
 int main(void)
@@ -47,10 +51,12 @@ int main(void)
         }
 
         getRawInput(userInput);
-        
+
         Command *command = calloc(1, sizeof(Command));
 
         parseCommand(userInput, command);
+
+        // printDiagnosticArgsParsingResults(command);
 
         // Handle blank lines and comments
         if (command->args[0] == NULL || command->args[0][0] == '#')
@@ -59,7 +65,6 @@ int main(void)
             free(command);
             continue;
         }
-        // printDiagnosticArgsParsingResults(command);
 
         // Handle cd
         else if (strcmp(command->args[0], CHANGE_DIRECTORY) == 0)
@@ -74,7 +79,6 @@ int main(void)
 
         free(userInput);
         free(command);
-
     }
     return 0;
 }
@@ -90,6 +94,15 @@ void parseCommand(char *userInput, Command *command)
     size_t n = strlen(userInput);
     if (userInput[n - 1] == '\n')
     {
+        userInput[n - 1] = '\0';
+    }
+
+    // If last character is &, set the runInBackground flag and
+    // strip it from input
+    n = strlen(userInput);
+    if (userInput[n - 1] == '&')
+    {
+        command->runInBackground = 1;
         userInput[n - 1] = '\0';
     }
 
@@ -114,12 +127,6 @@ void parseCommand(char *userInput, Command *command)
             command->outputFile = strtok(NULL, " ");
         }
 
-        // Flag to run process in background
-        else if (strcmp(token, "&") == 0)
-        {
-            command->runInBackground = 1;
-        }
-
         else
         {
             command->args[i] = token;
@@ -130,11 +137,12 @@ void parseCommand(char *userInput, Command *command)
 
 void changeDirectory(char *path)
 {
+    // Change to home directory if no path is specified
     if (path == NULL)
     {
         path = getenv(HOME);
     }
-    
+
     if (chdir(path))
     {
         perror("chdir");
@@ -146,26 +154,34 @@ void executeCommand(Command *command)
 {
     int childStatus;
     pid_t spawnPid = fork();
+    pid_t childProcessIterator = 0;
 
-    switch(spawnPid)
+    switch (spawnPid)
     {
-        // On error
-        case -1:
-            perror("fork");
-            exit(1);
-            break;
+    // On error
+    case -1:
+        perror("fork");
+        exit(1);
+        break;
 
-        // In child process
-        case 0:
-            execvp(command->args[0], command->args);
-            perror("execv");
-            exit(1);
-            break;
-        // In parent process
-        default:
-            spawnPid = waitpid(spawnPid, &childStatus, command->runInBackground ? WNOHANG : 0);
-            // printf("PARENT(%d): child(%d) terminated. Exiting\n", getpid(), spawnPid);
-            break;
+    // In child process
+    case 0:
+        execvp(command->args[0], command->args);
+        perror("execv");
+        exit(1);
+        break;
+    // In parent process
+    default:
+        // Add child process to first empty array index
+        while (childProcesses[childProcessIterator] != 0 && childProcessIterator < MAX_NUM_CHILD_PROCESSES)
+        {
+            childProcessIterator;
+        }
+        childProcesses[childProcessIterator] = spawnPid;
+
+        spawnPid = waitpid(spawnPid, &childStatus, command->runInBackground ? WNOHANG : 0);
+        // printf("PARENT(%d): child(%d) terminated. Exiting\n", getpid(), spawnPid);
+        break;
     }
 }
 
