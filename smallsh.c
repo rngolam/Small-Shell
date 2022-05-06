@@ -4,12 +4,16 @@
 #include <unistd.h>
 #include <sys/types.h>
 #include <sys/wait.h>
+#include <errno.h>
 
 #define MAX_COMMAND_LENGTH 2048
 #define MAX_NUM_ARGS 512
 #define CHANGE_DIRECTORY "cd"
 #define STATUS "status"
 #define EXIT "exit"
+#define DEFAULT_IO "/dev/null"
+#define PROMPT ": "
+#define HOME "HOME"
 
 typedef struct
 {
@@ -23,6 +27,7 @@ typedef struct
 // Function prototypes
 void getRawInput(char *);
 void parseCommand(char *, Command *);
+void changeDirectory(char *);
 void executeCommand(Command*);
 void printDiagnosticArgsParsingResults(Command *);
 
@@ -31,7 +36,8 @@ int main(void)
     while (1)
     {
         // Print command prompt
-        fprintf(stdout, ": ");
+        fprintf(stdout, PROMPT);
+        fflush(stdout);
 
         char *userInput = malloc(sizeof(char) * MAX_COMMAND_LENGTH + 1);
         if (userInput == NULL)
@@ -55,7 +61,16 @@ int main(void)
         }
         // printDiagnosticArgsParsingResults(command);
 
-        executeCommand(command);
+        // Handle cd
+        else if (strcmp(command->args[0], CHANGE_DIRECTORY) == 0)
+        {
+            changeDirectory(command->args[1]);
+        }
+
+        else
+        {
+            executeCommand(command);
+        }
 
         free(userInput);
         free(command);
@@ -87,31 +102,43 @@ void parseCommand(char *userInput, Command *command)
     int i = 1;
     while ((token = strtok(NULL, " ")))
     {
-        if (!strcmp(token, "<") || !strcmp(token, ">") || !strcmp(token, "&"))
+        // Redirect input
+        if (strcmp(token, "<") == 0)
         {
-            break;
+            command->inputFile = strtok(NULL, " ");
         }
-        command->args[i] = token;
-        i++;
-    }
 
-    // Redirect input
-    if (token != NULL && strcmp(token, "<") == 0)
-    {
-        command->inputFile = strtok(NULL, " ");
-        token = strtok(NULL, " ");
-    }
+        // Redirect output
+        else if (strcmp(token, ">") == 0)
+        {
+            command->outputFile = strtok(NULL, " ");
+        }
 
-    // Redirect output
-    if (token != NULL && strcmp(token, ">") == 0)
-    {
-        command->outputFile = strtok(NULL, " ");
-        token = strtok(NULL, " ");
-    }
+        // Flag to run process in background
+        else if (strcmp(token, "&") == 0)
+        {
+            command->runInBackground = 1;
+        }
 
-    if (token != NULL && strcmp(token, "&") == 0)
+        else
+        {
+            command->args[i] = token;
+            i++;
+        }
+    }
+}
+
+void changeDirectory(char *path)
+{
+    if (path == NULL)
     {
-        command->runInBackground = 1;
+        path = getenv(HOME);
+    }
+    
+    if (chdir(path))
+    {
+        perror("chdir");
+        exit(1);
     }
 }
 
@@ -136,7 +163,7 @@ void executeCommand(Command *command)
             break;
         // In parent process
         default:
-            spawnPid = waitpid(spawnPid, &childStatus, 0);
+            spawnPid = waitpid(spawnPid, &childStatus, command->runInBackground ? WNOHANG : 0);
             // printf("PARENT(%d): child(%d) terminated. Exiting\n", getpid(), spawnPid);
             break;
     }
