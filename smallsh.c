@@ -35,6 +35,7 @@ static pid_t childProcesses[MAX_NUM_CHILD_PROCESSES];
 static char statusMessage[25];
 
 // Function prototypes
+void registerSignalHandlers();
 void getRawInput(char *);
 void parseCommand(char *, Command *);
 void cleanUpChildProcesses();
@@ -46,6 +47,9 @@ void printDiagnosticArgsParsingResults(Command *);
 
 int main(void)
 {
+    // Register signal handlers
+    registerSignalHandlers();
+
     // Initialize default status message
     sprintf(statusMessage, "%s %d", EXITED_MESSAGE, 0);
 
@@ -103,6 +107,17 @@ int main(void)
         free(command);
     }
     return 0;
+}
+
+void registerSignalHandlers()
+{
+    struct sigaction ignore_action = {0};
+    
+    // Assign SIG_IGN as the struct's signal handler
+    ignore_action.sa_handler = SIG_IGN;
+
+    // Register the ignore_action struct as the handler for SIGINT
+    sigaction(SIGINT, &ignore_action, NULL);
 }
 
 void getRawInput(char *buffer)
