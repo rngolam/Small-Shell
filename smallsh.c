@@ -8,11 +8,12 @@
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <signal.h>
+#include <stddef.h>
 #include <errno.h>
 
 #define MAX_COMMAND_LENGTH 2048
 #define MAX_NUM_ARGS 512
-#define MAX_NUM_CHILD_PROCESSES 500
+#define MAX_NUM_BACKGROUND_PROCESSES 500
 #define CHANGE_DIRECTORY "cd"
 #define STATUS "status"
 #define EXIT "exit"
@@ -21,10 +22,10 @@
 #define HOME "HOME"
 #define EXITED_MESSAGE "exit value"
 #define TERMINATED_MESSAGE "terminated by signal"
-#define ENTER_FOREGROUND_MODE_MESSAGE "Entering foreground-only mode (& is now ignored)\n"
-#define EXIT_FOREGROUND_MODE_MESSAGE "Exiting foreground-only mode\n"
-#define ENTER_FOREGROUND_MODE_MESSAGE_LENGTH 50
-#define EXIT_FOREGROUND_MODE_MESSAGE_LENGTH 30
+#define ENTER_FOREGROUND_MODE_MESSAGE "Entering foreground-only mode (& is now ignored)"
+#define EXIT_FOREGROUND_MODE_MESSAGE "Exiting foreground-only mode"
+#define ENTER_FOREGROUND_MODE_MESSAGE_LENGTH 49
+#define EXIT_FOREGROUND_MODE_MESSAGE_LENGTH 29
 
 typedef struct Command
 {
@@ -36,20 +37,24 @@ typedef struct Command
 } Command;
 
 // Global variables
-static pid_t childProcesses[MAX_NUM_CHILD_PROCESSES];
+static pid_t backgroundProcesses[MAX_NUM_BACKGROUND_PROCESSES];
 static char statusMessage[25];
-bool foregroundMode;
+static volatile sig_atomic_t foregroundMode;
 
 // Function prototypes
 void registerParentSignalHandlers();
 void registerChildSignalHandlers(Command *);
-void handleSIGTSTP(int);
+void handle_SIGTSTP(int);
 int getRawInput(char *);
 void parseCommand(char *, Command *);
-void cleanUpChildProcesses();
+void cleanUpBackgroundProcesses();
+void killBackgroundProcesses();
 void changeDirectory(char *);
+void updateStatusMessage(int *);
 void printStatus();
 void executeCommand(Command *);
+void blockSIGTSTP(sigset_t *);
+void unblockSIGTSTP(sigset_t *);
 void redirectIO(Command *);
 void printDiagnosticArgsParsingResults(Command *);
 
@@ -89,10 +94,19 @@ int main(void)
 
         char *firstArg = command->args[0];
 
-        // Handle exit command
-        if (strcmp(firstArg, EXIT) == 0)
+        // Handle blank lines and comments
+        if (firstArg == NULL || firstArg[0] == '#')
         {
-            cleanUpChildProcesses();
+            cleanUpBackgroundProcesses();
+            free(userInput);
+            free(command);
+            continue;
+        }
+
+        // Handle exit command
+        else if (strcmp(firstArg, EXIT) == 0)
+        {
+            killBackgroundProcesses();
             free(userInput);
             free(command);
             exit(0);
@@ -110,11 +124,14 @@ int main(void)
             printStatus();
         }
 
-        // Execute non-empty, non-commented command
-        else if (firstArg != NULL && command->args[0][0] != '#')
+        // Execute non-built-in command
+        else
         {
             executeCommand(command);
         }
+
+        // Reap any terminated child processes before the next command prompt
+        cleanUpBackgroundProcesses();
 
         free(userInput);
         free(command);
@@ -124,32 +141,32 @@ int main(void)
 
 void registerParentSignalHandlers()
 {
-    struct sigaction SIGTSTPAction, ignoreAction = {0};
+    struct sigaction SIGTSTP_action, ignore_action = {{0}};
 
     // Fill out the SIGTSTP_action struct
-	// Register handleSIGTSTP as the signal handler
-	SIGTSTPAction.sa_handler = handleSIGTSTP;
-	// Block all catchable signals while handleSIGTSTP is running
-	if (sigfillset(&SIGTSTPAction.sa_mask))
+    // Register handle_SIGTSTP as the signal handler
+    SIGTSTP_action.sa_handler = handle_SIGTSTP;
+    // Block all catchable signals while handle_SIGTSTP is running
+    if (sigfillset(&SIGTSTP_action.sa_mask))
     {
         perror("sigfillset");
         exit(1);
     }
-	// No flags set
-	SIGTSTPAction.sa_flags = 0;
+    // No flags set
+    SIGTSTP_action.sa_flags = 0;
 
     // Install the signal handler
-	if (sigaction(SIGTSTP, &SIGTSTPAction, NULL))
+    if (sigaction(SIGTSTP, &SIGTSTP_action, NULL))
     {
         perror("sigaction");
         exit(1);
     }
 
     // Assign SIG_IGN as the struct's signal handler
-    ignoreAction.sa_handler = SIG_IGN;
+    ignore_action.sa_handler = SIG_IGN;
 
-    // Register the ignoreAction as the handler for SIGINT
-    if (sigaction(SIGINT, &ignoreAction, NULL))
+    // Register the ignore_action as the handler for SIGINT
+    if (sigaction(SIGINT, &ignore_action, NULL))
     {
         perror("sigaction");
         exit(1);
@@ -158,13 +175,13 @@ void registerParentSignalHandlers()
 
 void registerChildSignalHandlers(Command *command)
 {
-    struct sigaction SIGINTAction, ignoreAction = {0};
+    struct sigaction SIGINT_action, ignore_action = {{0}};
 
     // Override SIGINT handler when run in foreground
     if (!command->runInBackground)
     {
-        SIGINTAction.sa_handler = SIG_DFL;
-        if (sigaction(SIGINT, &SIGINTAction, NULL))
+        SIGINT_action.sa_handler = SIG_DFL;
+        if (sigaction(SIGINT, &SIGINT_action, NULL))
         {
             perror("sigaction");
             exit(1);
@@ -172,23 +189,37 @@ void registerChildSignalHandlers(Command *command)
     }
 
     // Ignore SIGTSTP
-    ignoreAction.sa_handler = SIG_IGN;
-    if (sigaction(SIGTSTP, &ignoreAction, NULL))
+    ignore_action.sa_handler = SIG_IGN;
+    if (sigaction(SIGTSTP, &ignore_action, NULL))
     {
         perror("sigaction");
         exit(1);
     }
 }
 
-void handleSIGTSTP(int signo)
+void handle_SIGTSTP(int signo)
 {
+    if (write(STDOUT_FILENO, "\n", 1) == -1)
+    {
+        perror("write");
+        exit(1);
+    }
+
     char *message = foregroundMode ? EXIT_FOREGROUND_MODE_MESSAGE : ENTER_FOREGROUND_MODE_MESSAGE;
     int n = foregroundMode ? EXIT_FOREGROUND_MODE_MESSAGE_LENGTH : ENTER_FOREGROUND_MODE_MESSAGE_LENGTH;
+
     if (write(STDOUT_FILENO, message, n) == -1)
     {
         perror("write");
         exit(1);
     }
+
+    if (write(STDOUT_FILENO, "\n", 1) == -1)
+    {
+        perror("write");
+        exit(1);
+    }
+
     // XOR to toggle bit
     foregroundMode ^= 1;
 }
@@ -265,15 +296,39 @@ void parseCommand(char *userInput, Command *command)
     }
 }
 
-void cleanUpChildProcesses()
+void cleanUpBackgroundProcesses()
 {
-    // Clean up child processes
-    for (pid_t i = 0; i < MAX_NUM_CHILD_PROCESSES; i++)
+    pid_t childPid;
+    int childStatus;
+
+    // Reap child processes that have terminated
+    for (pid_t i = 0; i < MAX_NUM_BACKGROUND_PROCESSES; i++)
     {
-        if (childProcesses[i] != 0)
+        if (backgroundProcesses[i])
+        {
+            childPid = waitpid(backgroundProcesses[i], &childStatus, WNOHANG);
+            if (childPid)
+            {
+                updateStatusMessage(&childStatus);
+                fprintf(stdout, "background pid %d is done: %s\n", backgroundProcesses[i], statusMessage);
+                fflush(stdout);
+
+                // Remove terminated process from array
+                backgroundProcesses[i] = 0;
+            }
+        }
+    }
+}
+
+void killBackgroundProcesses()
+{
+    // Kill child processes
+    for (pid_t i = 0; i < MAX_NUM_BACKGROUND_PROCESSES; i++)
+    {
+        if (backgroundProcesses[i])
         {
             // Ignore errors from zombie and recently terminated processes
-            if (kill(childProcesses[i], SIGKILL) && errno != ESRCH)
+            if (kill(backgroundProcesses[i], SIGKILL) && errno != ESRCH)
             {
                 perror("kill");
                 exit(1);
@@ -293,7 +348,18 @@ void changeDirectory(char *path)
     if (chdir(path))
     {
         perror("chdir");
-        exit(1);
+    }
+}
+
+void updateStatusMessage(int *childStatus)
+{
+    if (WIFEXITED(*childStatus))
+    {
+        sprintf(statusMessage, "%s %d", EXITED_MESSAGE, WEXITSTATUS(*childStatus));
+    }
+    else if (WIFSIGNALED(*childStatus))
+    {
+        sprintf(statusMessage, "%s %d", TERMINATED_MESSAGE, WTERMSIG(*childStatus));
     }
 }
 
@@ -307,7 +373,9 @@ void executeCommand(Command *command)
 {
     int childStatus;
     pid_t spawnPid = fork();
-    pid_t childProcessIterator = 0;
+    pid_t backgroundProcessIterator = 0;
+
+    sigset_t block_mask;
 
     switch (spawnPid)
     {
@@ -319,41 +387,96 @@ void executeCommand(Command *command)
 
     // In child process
     case 0:
+
         // Redirect I/O
         redirectIO(command);
         registerChildSignalHandlers(command);
 
         execvp(command->args[0], command->args);
-        
+
         // Only executes on error
         perror("execvp");
         exit(1);
         break;
+
     // In parent process
     default:
-        // Add child process to first empty array index
-        while (childProcesses[childProcessIterator] != 0 && childProcessIterator < MAX_NUM_CHILD_PROCESSES)
+
+        // Temporarily block SIGTSTP signals
+        blockSIGTSTP(&block_mask);
+
+        // Store information about background process
+        if (command->runInBackground)
         {
-            childProcessIterator++;
+            // Add background process to first empty array index
+            while (backgroundProcesses[backgroundProcessIterator] != 0 && backgroundProcessIterator < MAX_NUM_BACKGROUND_PROCESSES)
+            {
+                backgroundProcessIterator++;
+            }
+            // Kill background processes if there is no more room in array
+            if (backgroundProcessIterator == MAX_NUM_BACKGROUND_PROCESSES)
+            {
+                killBackgroundProcesses();
+                backgroundProcessIterator = 0;
+            }
+
+            backgroundProcesses[backgroundProcessIterator] = spawnPid;
+
+            fprintf(stdout, "background pid is %d\n", spawnPid);
+            fflush(stdout);
         }
-        childProcesses[childProcessIterator] = spawnPid;
 
+        // If process is run in foreground, no flags are set and execution will hang until the specified pid terminates
+        // If run in the background, the WNOHANG flag is set and waitpid immediately returns 0
         spawnPid = waitpid(spawnPid, &childStatus, command->runInBackground ? WNOHANG : 0);
-        // printf("PARENT(%d): child(%d) terminated. Exiting\n", getpid(), spawnPid);
 
+        // Update information about finished foreground process
+        if (!command->runInBackground)
+        {
+            updateStatusMessage(&childStatus);
 
-        if (WIFEXITED(childStatus))
-        {
-			// printf("Child %d exited normally with status %d\n", spawnPid, WEXITSTATUS(childStatus));
-            sprintf(statusMessage, "%s %d", EXITED_MESSAGE, WEXITSTATUS(childStatus));
-		}
-        else
-        {
-			// printf("Child %d exited abnormally due to signal %d\n", spawnPid, WTERMSIG(childStatus));
-            sprintf(statusMessage, "%s %d", TERMINATED_MESSAGE, WTERMSIG(childStatus));
-            printStatus();
-		}
+            // Immediately print out status message for foreground processes killed by a signal
+            if (WIFSIGNALED(childStatus))
+            {
+                fprintf(stdout, "%s\n", statusMessage);
+                fflush(stdout);
+            }
+        }
+
+        // Unblock SIGTSTP signals (any signals blocked during foreground process will be processed by handler)
+        unblockSIGTSTP(&block_mask);
+
         break;
+    }
+}
+
+void blockSIGTSTP(sigset_t *block_mask)
+{
+    if (sigemptyset(block_mask))
+    {
+        perror("sigemptyset");
+        exit(1);
+    }
+
+    if (sigaddset(block_mask, SIGTSTP))
+    {
+        perror("sigaddset");
+        exit(1);
+    }
+
+    if (sigprocmask(SIG_BLOCK, block_mask, NULL))
+    {
+        perror("sigprocmask");
+        exit(1);
+    }
+}
+
+void unblockSIGTSTP(sigset_t *block_mask)
+{
+    if (sigprocmask(SIG_UNBLOCK, block_mask, NULL))
+    {
+        perror("sigprocmask");
+        exit(1);
     }
 }
 
