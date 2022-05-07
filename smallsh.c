@@ -3,6 +3,7 @@
 #include <string.h>
 #include <unistd.h>
 #include <fcntl.h>
+#include <stdbool.h>
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
@@ -20,6 +21,10 @@
 #define HOME "HOME"
 #define EXITED_MESSAGE "exit value"
 #define TERMINATED_MESSAGE "terminated by signal"
+#define ENTER_FOREGROUND_MODE_MESSAGE "Entering foreground-only mode (& is now ignored)\n"
+#define EXIT_FOREGROUND_MODE_MESSAGE "Exiting foreground-only mode\n"
+#define ENTER_FOREGROUND_MODE_MESSAGE_LENGTH 50
+#define EXIT_FOREGROUND_MODE_MESSAGE_LENGTH 30
 
 typedef struct Command
 {
@@ -27,16 +32,19 @@ typedef struct Command
     char *args[MAX_NUM_ARGS + 1];
     char *inputFile;
     char *outputFile;
-    _Bool runInBackground;
+    bool runInBackground;
 } Command;
 
 // Global variables
 static pid_t childProcesses[MAX_NUM_CHILD_PROCESSES];
 static char statusMessage[25];
+bool foregroundMode;
 
 // Function prototypes
-void registerSignalHandlers();
-void getRawInput(char *);
+void registerParentSignalHandlers();
+void registerChildSignalHandlers(Command *);
+void handleSIGTSTP(int);
+int getRawInput(char *);
 void parseCommand(char *, Command *);
 void cleanUpChildProcesses();
 void changeDirectory(char *);
@@ -48,7 +56,7 @@ void printDiagnosticArgsParsingResults(Command *);
 int main(void)
 {
     // Register signal handlers
-    registerSignalHandlers();
+    registerParentSignalHandlers();
 
     // Initialize default status message
     sprintf(statusMessage, "%s %d", EXITED_MESSAGE, 0);
@@ -66,7 +74,12 @@ int main(void)
             exit(1);
         }
 
-        getRawInput(userInput);
+        if (getRawInput(userInput))
+        {
+            // Restart loop if system call was interrupted by signal
+            free(userInput);
+            continue;
+        }
 
         Command *command = calloc(1, sizeof(Command));
 
@@ -109,20 +122,90 @@ int main(void)
     return 0;
 }
 
-void registerSignalHandlers()
+void registerParentSignalHandlers()
 {
-    struct sigaction ignore_action = {0};
-    
-    // Assign SIG_IGN as the struct's signal handler
-    ignore_action.sa_handler = SIG_IGN;
+    struct sigaction SIGTSTPAction, ignoreAction = {0};
 
-    // Register the ignore_action struct as the handler for SIGINT
-    sigaction(SIGINT, &ignore_action, NULL);
+    // Fill out the SIGTSTP_action struct
+	// Register handleSIGTSTP as the signal handler
+	SIGTSTPAction.sa_handler = handleSIGTSTP;
+	// Block all catchable signals while handleSIGTSTP is running
+	if (sigfillset(&SIGTSTPAction.sa_mask))
+    {
+        perror("sigfillset");
+        exit(1);
+    }
+	// No flags set
+	SIGTSTPAction.sa_flags = 0;
+
+    // Install the signal handler
+	if (sigaction(SIGTSTP, &SIGTSTPAction, NULL))
+    {
+        perror("sigaction");
+        exit(1);
+    }
+
+    // Assign SIG_IGN as the struct's signal handler
+    ignoreAction.sa_handler = SIG_IGN;
+
+    // Register the ignoreAction as the handler for SIGINT
+    if (sigaction(SIGINT, &ignoreAction, NULL))
+    {
+        perror("sigaction");
+        exit(1);
+    }
 }
 
-void getRawInput(char *buffer)
+void registerChildSignalHandlers(Command *command)
 {
-    fgets(buffer, MAX_COMMAND_LENGTH + 1, stdin);
+    struct sigaction SIGINTAction, ignoreAction = {0};
+
+    // Override SIGINT handler when run in foreground
+    if (!command->runInBackground)
+    {
+        SIGINTAction.sa_handler = SIG_DFL;
+        if (sigaction(SIGINT, &SIGINTAction, NULL))
+        {
+            perror("sigaction");
+            exit(1);
+        }
+    }
+
+    // Ignore SIGTSTP
+    ignoreAction.sa_handler = SIG_IGN;
+    if (sigaction(SIGTSTP, &ignoreAction, NULL))
+    {
+        perror("sigaction");
+        exit(1);
+    }
+}
+
+void handleSIGTSTP(int signo)
+{
+    char *message = foregroundMode ? EXIT_FOREGROUND_MODE_MESSAGE : ENTER_FOREGROUND_MODE_MESSAGE;
+    int n = foregroundMode ? EXIT_FOREGROUND_MODE_MESSAGE_LENGTH : ENTER_FOREGROUND_MODE_MESSAGE_LENGTH;
+    if (write(STDOUT_FILENO, message, n) == -1)
+    {
+        perror("write");
+        exit(1);
+    }
+    // XOR to toggle bit
+    foregroundMode ^= 1;
+}
+
+int getRawInput(char *buffer)
+{
+    if (!fgets(buffer, MAX_COMMAND_LENGTH + 1, stdin))
+    {
+        // Catch error due to interrupt signal
+        if (errno == EINTR)
+        {
+            return 1;
+        }
+        perror("fgets");
+        exit(1);
+    }
+    return 0;
 }
 
 void parseCommand(char *userInput, Command *command)
@@ -139,7 +222,10 @@ void parseCommand(char *userInput, Command *command)
     n = strlen(userInput);
     if (userInput[n - 1] == '&')
     {
-        command->runInBackground = 1;
+        if (!foregroundMode)
+        {
+            command->runInBackground = true;
+        }
         userInput[n - 1] = '\0';
     }
 
@@ -235,6 +321,7 @@ void executeCommand(Command *command)
     case 0:
         // Redirect I/O
         redirectIO(command);
+        registerChildSignalHandlers(command);
 
         execvp(command->args[0], command->args);
         
@@ -264,6 +351,7 @@ void executeCommand(Command *command)
         {
 			// printf("Child %d exited abnormally due to signal %d\n", spawnPid, WTERMSIG(childStatus));
             sprintf(statusMessage, "%s %d", TERMINATED_MESSAGE, WTERMSIG(childStatus));
+            printStatus();
 		}
         break;
     }
