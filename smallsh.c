@@ -338,30 +338,11 @@ void cleanUpBackgroundProcesses()
         {
             if (backgroundProcesses[i] == childPid)
             {
-                fprintf(stderr, "found pid %d in array. Removing\n", backgroundProcesses[i]);
                 backgroundProcesses[i] = 0;
                 break;
             }
         }
     }
-
-    // Reap child processes that have terminated
-    // for (pid_t i = 0; i < MAX_NUM_BACKGROUND_PROCESSES; i++)
-    // {
-    //     if (backgroundProcesses[i])
-    //     {
-    //         childPid = waitpid(backgroundProcesses[i], &childStatus, WNOHANG);
-    //         if (childPid)
-    //         {
-    //             updateStatusMessage(&childStatus);
-    //             fprintf(stdout, "background pid %d is done: %s\n", backgroundProcesses[i], statusMessage);
-    //             fflush(stdout);
-
-    //             // Remove terminated process from array
-    //             backgroundProcesses[i] = 0;
-    //         }
-    //     }
-    // }
 }
 
 void killBackgroundProcesses()
