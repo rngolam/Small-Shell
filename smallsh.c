@@ -17,7 +17,7 @@
 #define CHANGE_DIRECTORY "cd"
 #define STATUS "status"
 #define EXIT "exit"
-#define DEFAULT_IO "/dev/null"
+#define NULL_IO "/dev/null"
 #define PROMPT ": "
 #define EXPAND_VAR '$'
 #define REDIRECT_INPUT "<"
@@ -316,8 +316,8 @@ void parseCommand(char *userInput, Command *command)
     // Set default I/O path for background process if necessary
     if (command->runInBackground)
     {
-        command->inputFile = command->inputFile ? command->inputFile : DEFAULT_IO;
-        command->outputFile = command->outputFile ? command->outputFile : DEFAULT_IO;
+        command->inputFile = command->inputFile ? command->inputFile : NULL_IO;
+        command->outputFile = command->outputFile ? command->outputFile : NULL_IO;
     }
 }
 
@@ -327,22 +327,41 @@ void cleanUpBackgroundProcesses()
     int childStatus;
 
     // Reap child processes that have terminated
-    for (pid_t i = 0; i < MAX_NUM_BACKGROUND_PROCESSES; i++)
+    while ((childPid = waitpid(-1, &childStatus, WNOHANG)) > 0)
     {
-        if (backgroundProcesses[i])
-        {
-            childPid = waitpid(backgroundProcesses[i], &childStatus, WNOHANG);
-            if (childPid)
-            {
-                updateStatusMessage(&childStatus);
-                fprintf(stdout, "background pid %d is done: %s\n", backgroundProcesses[i], statusMessage);
-                fflush(stdout);
+        updateStatusMessage(&childStatus);
+        fprintf(stdout, "background pid %d is done: %s\n", childPid, statusMessage);
+        fflush(stdout);
 
-                // Remove terminated process from array
+        // Search for terminated childPid and remove it from array
+        for (pid_t i = 0; i < MAX_NUM_BACKGROUND_PROCESSES; i++)
+        {
+            if (backgroundProcesses[i] == childPid)
+            {
+                fprintf(stderr, "found pid %d in array. Removing\n", backgroundProcesses[i]);
                 backgroundProcesses[i] = 0;
+                break;
             }
         }
     }
+
+    // Reap child processes that have terminated
+    // for (pid_t i = 0; i < MAX_NUM_BACKGROUND_PROCESSES; i++)
+    // {
+    //     if (backgroundProcesses[i])
+    //     {
+    //         childPid = waitpid(backgroundProcesses[i], &childStatus, WNOHANG);
+    //         if (childPid)
+    //         {
+    //             updateStatusMessage(&childStatus);
+    //             fprintf(stdout, "background pid %d is done: %s\n", backgroundProcesses[i], statusMessage);
+    //             fflush(stdout);
+
+    //             // Remove terminated process from array
+    //             backgroundProcesses[i] = 0;
+    //         }
+    //     }
+    // }
 }
 
 void killBackgroundProcesses()
