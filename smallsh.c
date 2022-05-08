@@ -112,7 +112,7 @@ int main(void)
             killBackgroundProcesses();
             free(userInput);
             free(command);
-            exit(0);
+            break;
         }
 
         // Handle cd command
