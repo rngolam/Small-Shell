@@ -1,39 +1,48 @@
 # Smallsh (Small Shell)
+
 A custom interactive shell implementing a subset of well-known shell features. Written in C.
 
 ## Features
-- Single-line shell commands
-- Built-in `exit`, `cd`, and `status` commands
-- Execution of other PATH binaries
-- I/O redirection
-- Foreground and background processes
-- Custom handlers for `SIGINT` and `SIGTSTP` signals
+
+-   Single-line shell commands
+-   Built-in `exit`, `cd`, and `status` commands
+-   Execution of other PATH binaries
+-   I/O redirection
+-   Foreground and background processes
+-   Custom handlers for `SIGINT` and `SIGTSTP` signals
 
 ## Limitations
-- Maximum of 2048 characters in command, including variable expansion of `$$`
-- Maximum of 512 arguments, including the command name
-- Maximum of 500 concurrent background processes
+
+-   Maximum of 2048 characters in command, including variable expansion of `$$`
+-   Maximum of 512 arguments, including the command name
+-   Maximum of 500 concurrent background processes
 
 ## Compilation
-- Compile using GCC with the `-std=gnu99` flag for C99 standards with GNU extensions
-- Full command: `gcc -O3 -std=gnu99 -Wall -Wextra -Wpedantic -Werror smallsh.c -o smallsh`
-- Alternatively, run `make` using the provided Makefile
+
+-   Compile using GCC with the `-std=gnu99` flag for C99 standards with GNU extensions
+-   Full command: `gcc -O3 -std=gnu99 -Wall -Wextra -Wpedantic -Werror smallsh.c -o smallsh`
+-   Alternatively, run `make` using the provided Makefile
 
 ## Usage
-- Start the shell by running `./smallsh`
-- Once started, the shell will display `:` as its command prompt
-- Smallsh supports commands in the following format:
-  - `command [arg1 arg2 ...] [< input_file] [> output_file] [&]`
-  - Where items in square brackets are optional
-    - `command` is the name of the command or PATH binary you wish to execute
-    - `<` will redirect input from `stdin` to the specified `input_file`
-    - `>` will redirect output from `stdout` to the specified `output_file`
-    - `&` is a flag to run the process in the background
-- Run `cd [path]` to change the working directory. Supports both relative and absolute paths.
-- Run `status` to display the exit value or termination signal of the last terminated process
-- Run `exit` to kill any background processes and terminate the shell
+
+-   Start the shell by running `./smallsh`
+-   Once started, the shell will display `:` as its command prompt
+-   Smallsh supports commands in the following format:
+    -   `command [arg1 arg2 ...] [< input_file] [> output_file] [&]`
+    -   Where items in square brackets are optional
+        -   `command` is the name of the command or PATH binary you wish to execute
+        -   `<` will redirect input from `stdin` to the specified `input_file`
+        -   `>` will redirect output from `stdout` to the specified `output_file`
+        -   `&` is a flag to run the process in the background
+-   Run `cd [path]` to change the working directory. Supports both relative and absolute paths.
+-   Run `status` to display the exit value or termination signal of the last terminated process
+-   Run `exit` to kill any background processes and terminate the shell
+-   Send a `SIGINT` signal (e.g. `Ctrl + C`) to terminate any foreground process
+-   Send a `SIGTSTP` signal (e.g. `Ctrl + Z`) to enter foreground-only mode, in which the `&` flag will be ignored and all processes will run in the foreground
+    -   Send another `SIGTSTP` signal to exit foreground-only mode
 
 ## Example
+
 ```bash
 $ ./smallsh
 : ls
@@ -103,5 +112,5 @@ background pid is 4350
 : date
 Sat May  7 21:12:33 PDT 2022
 : exit
-$ 
+$
 ```
