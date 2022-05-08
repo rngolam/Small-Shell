@@ -420,7 +420,7 @@ void executeCommand(Command *command)
         execvp(command->args[0], command->args);
 
         // Only executes on error
-        perror("execvp");
+        fprintf(stderr, "%s: %s\n", command->args[0], strerror(errno));
         exit(1);
         break;
 
@@ -512,7 +512,7 @@ void redirectIO(Command *command)
         int inputFD = open(command->inputFile, O_RDONLY);
         if (inputFD == -1)
         {
-            perror("open");
+            fprintf(stderr, "cannot open %s for input\n", command->inputFile);
             exit(1);
         }
 
@@ -528,7 +528,7 @@ void redirectIO(Command *command)
         int outputFD = open(command->outputFile, O_CREAT | O_WRONLY | O_TRUNC, S_IRUSR | S_IWUSR | S_IRGRP);
         if (outputFD == -1)
         {
-            perror("open");
+            fprintf(stderr, "cannot open %s for output\n", command->outputFile);
             exit(1);
         }
 
