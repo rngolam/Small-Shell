@@ -29,7 +29,7 @@ A custom interactive shell implementing a subset of well-known shell features. W
 -   Once started, the shell will display `:` as its command prompt
 -   Smallsh supports commands in the following format:
     -   `command [arg1 arg2 ...] [< input_file] [> output_file] [&]`
-    -   Where items in square brackets are optional
+        -   ...where items in square brackets are optional
         -   `command` is the name of the command or PATH binary you wish to execute
         -   `<` will redirect input from `stdin` to the specified `input_file`
         -   `>` will redirect output from `stdout` to the specified `output_file`
