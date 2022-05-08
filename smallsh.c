@@ -19,13 +19,17 @@
 #define EXIT "exit"
 #define DEFAULT_IO "/dev/null"
 #define PROMPT ": "
+#define EXPAND_VAR '$'
+#define REDIRECT_INPUT "<"
+#define REDIRECT_OUTPUT ">"
+#define RUN_IN_BACKGROUND_CHAR '&'
 #define HOME "HOME"
 #define EXITED_MESSAGE "exit value"
 #define TERMINATED_MESSAGE "terminated by signal"
 #define ENTER_FOREGROUND_MODE_MESSAGE "Entering foreground-only mode (& is now ignored)"
 #define EXIT_FOREGROUND_MODE_MESSAGE "Exiting foreground-only mode"
-#define ENTER_FOREGROUND_MODE_MESSAGE_LENGTH 49
-#define EXIT_FOREGROUND_MODE_MESSAGE_LENGTH 29
+#define ENTER_FOREGROUND_MODE_MESSAGE_LENGTH 48
+#define EXIT_FOREGROUND_MODE_MESSAGE_LENGTH 28
 
 typedef struct Command
 {
@@ -45,7 +49,7 @@ static volatile sig_atomic_t foregroundMode;
 void registerParentSignalHandlers();
 void registerChildSignalHandlers(Command *);
 void handle_SIGTSTP(int);
-int getRawInput(char *);
+int getInput(char *, pid_t);
 void parseCommand(char *, Command *);
 void cleanUpBackgroundProcesses();
 void killBackgroundProcesses();
@@ -66,6 +70,8 @@ int main(void)
     // Initialize default status message
     sprintf(statusMessage, "%s %d", EXITED_MESSAGE, 0);
 
+    pid_t pid = getpid();
+
     while (1)
     {
         // Print command prompt
@@ -79,18 +85,15 @@ int main(void)
             exit(1);
         }
 
-        if (getRawInput(userInput))
+        // Restart loop if getInput is interrupted
+        if (getInput(userInput, pid))
         {
-            // Restart loop if system call was interrupted by signal
             free(userInput);
             continue;
         }
 
         Command *command = calloc(1, sizeof(Command));
-
         parseCommand(userInput, command);
-
-        // printDiagnosticArgsParsingResults(command);
 
         char *firstArg = command->args[0];
 
@@ -141,7 +144,9 @@ int main(void)
 
 void registerParentSignalHandlers()
 {
-    struct sigaction SIGTSTP_action, ignore_action = {{0}};
+    struct sigaction SIGTSTP_action, ignore_action;
+    memset(&SIGTSTP_action, 0, sizeof SIGTSTP_action);
+    memset(&ignore_action, 0, sizeof ignore_action);
 
     // Fill out the SIGTSTP_action struct
     // Register handle_SIGTSTP as the signal handler
@@ -175,7 +180,9 @@ void registerParentSignalHandlers()
 
 void registerChildSignalHandlers(Command *command)
 {
-    struct sigaction SIGINT_action, ignore_action = {{0}};
+    struct sigaction SIGINT_action, ignore_action;
+    memset(&SIGINT_action, 0, sizeof SIGINT_action);
+    memset(&ignore_action, 0, sizeof ignore_action);
 
     // Override SIGINT handler when run in foreground
     if (!command->runInBackground)
@@ -197,16 +204,21 @@ void registerChildSignalHandlers(Command *command)
     }
 }
 
-void handle_SIGTSTP(int signo)
+void handle_SIGTSTP(__attribute__ ((unused)) int signo)
 {
+    // Note: All signals are blocked during execution signal handler in the registerParentSignalHandlers function
+
+    char *message = foregroundMode ? EXIT_FOREGROUND_MODE_MESSAGE : ENTER_FOREGROUND_MODE_MESSAGE;
+    int n = foregroundMode ? EXIT_FOREGROUND_MODE_MESSAGE_LENGTH : ENTER_FOREGROUND_MODE_MESSAGE_LENGTH;
+
+    // XOR to toggle bit
+    foregroundMode ^= 1;
+
     if (write(STDOUT_FILENO, "\n", 1) == -1)
     {
         perror("write");
         exit(1);
     }
-
-    char *message = foregroundMode ? EXIT_FOREGROUND_MODE_MESSAGE : ENTER_FOREGROUND_MODE_MESSAGE;
-    int n = foregroundMode ? EXIT_FOREGROUND_MODE_MESSAGE_LENGTH : ENTER_FOREGROUND_MODE_MESSAGE_LENGTH;
 
     if (write(STDOUT_FILENO, message, n) == -1)
     {
@@ -219,39 +231,52 @@ void handle_SIGTSTP(int signo)
         perror("write");
         exit(1);
     }
-
-    // XOR to toggle bit
-    foregroundMode ^= 1;
 }
 
-int getRawInput(char *buffer)
+int getInput(char *buffer, pid_t pid)
 {
-    if (!fgets(buffer, MAX_COMMAND_LENGTH + 1, stdin))
+    int offset = 0;
+    char c1, c2;
+    while ((c1 = fgetc(stdin)) != '\n')
     {
-        // Catch error due to interrupt signal
-        if (errno == EINTR)
+        // Catch error if interrupted
+        if (c1 == EOF && errno == EINTR)
         {
             return 1;
         }
-        perror("fgets");
-        exit(1);
+
+        // If two consecutive expand variables are read, write the pid to the buffer in place of them
+        if (c1 == EXPAND_VAR)
+        {
+            c2 = fgetc(stdin);
+            if (c2 == EXPAND_VAR)
+            {
+                int bytesWritten = sprintf(buffer + offset, "%d", pid);
+                offset += bytesWritten;
+                continue;
+            }
+
+            else
+            {
+                // If no expansion is needed, place second character back in the file stream
+                ungetc(c2, stdin);
+            }
+        }
+        buffer[offset] = c1;
+        offset += 1;
     }
+    // Null terminate the string
+    buffer[offset] = '\0';
+
     return 0;
 }
 
 void parseCommand(char *userInput, Command *command)
 {
-    // Strip newline character
-    size_t n = strlen(userInput);
-    if (userInput[n - 1] == '\n')
-    {
-        userInput[n - 1] = '\0';
-    }
-
     // If last character is &, set the runInBackground flag and
     // strip it from input
-    n = strlen(userInput);
-    if (userInput[n - 1] == '&')
+    size_t n = strlen(userInput);
+    if (userInput[n - 1] == RUN_IN_BACKGROUND_CHAR)
     {
         if (!foregroundMode)
         {
@@ -270,13 +295,13 @@ void parseCommand(char *userInput, Command *command)
     while ((token = strtok(NULL, " ")))
     {
         // Redirect input
-        if (strcmp(token, "<") == 0)
+        if (strcmp(token, REDIRECT_INPUT) == 0)
         {
             command->inputFile = strtok(NULL, " ");
         }
 
         // Redirect output
-        else if (strcmp(token, ">") == 0)
+        else if (strcmp(token, REDIRECT_OUTPUT) == 0)
         {
             command->outputFile = strtok(NULL, " ");
         }
@@ -513,22 +538,4 @@ void redirectIO(Command *command)
             exit(1);
         }
     }
-}
-
-void printDiagnosticArgsParsingResults(Command *command)
-{
-    fprintf(stderr, "Parsing results:\n");
-    fprintf(stderr, "command = %s\n", command->args[0]);
-    fprintf(stderr, "args = {");
-    for (int i = 0; i < MAX_NUM_ARGS; i++)
-    {
-        if (command->args[i] != NULL)
-        {
-            fprintf(stderr, "%s,", command->args[i]);
-        }
-    }
-    fprintf(stderr, "}\n");
-    fprintf(stderr, "inputFile = %s\n", command->inputFile);
-    fprintf(stderr, "outputFile = %s\n", command->outputFile);
-    fprintf(stderr, "runInBackground = %s\n", command->runInBackground ? "true" : "false");
 }
