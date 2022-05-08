@@ -184,7 +184,6 @@ void registerParentSignalHandlers()
 
 /**
  * Registers signal handlers for forked child processes
- *
  * @param command Pointer to the struct containing the parsed command line input
  */
 void registerChildSignalHandlers(Command *command)
