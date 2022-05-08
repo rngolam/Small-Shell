@@ -276,7 +276,7 @@ void parseCommand(char *userInput, Command *command)
     // If last character is &, set the runInBackground flag and
     // strip it from input
     size_t n = strlen(userInput);
-    if (userInput[n - 1] == RUN_IN_BACKGROUND_CHAR)
+    if (n && userInput[n - 1] == RUN_IN_BACKGROUND_CHAR)
     {
         if (!foregroundMode)
         {
