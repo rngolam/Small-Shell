@@ -142,6 +142,10 @@ int main(void)
     return 0;
 }
 
+/**
+ * Registers signal handlers for the parent smallsh process and blocks catchable signals
+ * while signal handlers are running.
+ */
 void registerParentSignalHandlers()
 {
     struct sigaction SIGTSTP_action, ignore_action;
@@ -178,6 +182,11 @@ void registerParentSignalHandlers()
     }
 }
 
+/**
+ * Registers signal handlers for forked child processes
+ *
+ * @param command Pointer to the struct containing the parsed command line input
+ */
 void registerChildSignalHandlers(Command *command)
 {
     struct sigaction SIGINT_action, ignore_action;
@@ -204,6 +213,10 @@ void registerChildSignalHandlers(Command *command)
     }
 }
 
+/**
+ * Handler function for SIGTSTP signals. Note that all catchable signals are blocked during execution.
+ * @param signo The signal number
+ */
 void handle_SIGTSTP(__attribute__ ((unused)) int signo)
 {
     // Note: All signals are blocked during execution signal handler in the registerParentSignalHandlers function
@@ -233,6 +246,12 @@ void handle_SIGTSTP(__attribute__ ((unused)) int signo)
     }
 }
 
+/**
+ * Reads user input into a buffer and expands consecutive instances of EXPAND_VAR with the calling process' pid
+ * @param buffer The buffer to write user input into
+ * @param pid The calling process' pid
+ * @return 0, or -1 on error, with errno set
+ */
 int getInput(char *buffer, pid_t pid)
 {
     int offset = 0;
@@ -242,7 +261,7 @@ int getInput(char *buffer, pid_t pid)
         // Catch error if interrupted
         if (c1 == EOF && errno == EINTR)
         {
-            return 1;
+            return -1;
         }
 
         // If two consecutive expand variables are read, write the pid to the buffer in place of them
@@ -271,6 +290,11 @@ int getInput(char *buffer, pid_t pid)
     return 0;
 }
 
+/**
+ * Parses user input and populates fields in Command struct
+ * @param userInput An allocated string containing the user's command line input
+ * @param command Pointer to an allocated Command struct
+ */
 void parseCommand(char *userInput, Command *command)
 {
     // If last character is &, set the runInBackground flag and
@@ -321,6 +345,10 @@ void parseCommand(char *userInput, Command *command)
     }
 }
 
+/**
+ * Reaps any zombie background processes that have terminated
+ * and evicts them the background processes array
+ */
 void cleanUpBackgroundProcesses()
 {
     pid_t childPid;
@@ -345,9 +373,11 @@ void cleanUpBackgroundProcesses()
     }
 }
 
+/**
+ * Sends a SIGKILL signal to all background processes
+ */
 void killBackgroundProcesses()
 {
-    // Kill child processes
     for (pid_t i = 0; i < MAX_NUM_BACKGROUND_PROCESSES; i++)
     {
         if (backgroundProcesses[i])
@@ -362,6 +392,12 @@ void killBackgroundProcesses()
     }
 }
 
+/**
+ * Changes the working directory to the specified path
+ * @param path A string containing the relative or absolute path the user
+ * wishes to change the working directory to. If NULL, changes to the directory to that
+ * specified in the HOME environment variable
+ */
 void changeDirectory(char *path)
 {
     // Change to home directory if no path is specified
@@ -376,6 +412,11 @@ void changeDirectory(char *path)
     }
 }
 
+/**
+ * Updates the global status string with information about the most recently ended child process
+ * @param childStatus A pointer to an integer containing status information about the most recently ended
+ * child process
+ */
 void updateStatusMessage(int *childStatus)
 {
     if (WIFEXITED(*childStatus))
@@ -388,12 +429,21 @@ void updateStatusMessage(int *childStatus)
     }
 }
 
+/**
+ * Displays information about the most recently ended child process
+ */
 void printStatus()
 {
     fprintf(stdout, "%s\n", statusMessage);
     fflush(stdout);
 }
 
+/**
+ * Executes a non-built-in shell command specified in the Command struct by searching for the executable
+ * in the PATH environmental variable. Forks the process and either waits for the child process to terminate (if run in
+ * the foreground) or immediately returns control of the terminal to the user (if run in the background).
+ * @param command Pointer to the struct containing the parsed command line input
+ */
 void executeCommand(Command *command)
 {
     int childStatus;
@@ -413,7 +463,6 @@ void executeCommand(Command *command)
     // In child process
     case 0:
 
-        // Redirect I/O
         redirectIO(command);
         registerChildSignalHandlers(command);
 
@@ -463,8 +512,7 @@ void executeCommand(Command *command)
             // Immediately print out status message for foreground processes killed by a signal
             if (WIFSIGNALED(childStatus))
             {
-                fprintf(stdout, "%s\n", statusMessage);
-                fflush(stdout);
+                printStatus();
             }
         }
 
@@ -475,6 +523,10 @@ void executeCommand(Command *command)
     }
 }
 
+/**
+ * Adds the SIGTSTP signal to a signal set and changes calling thread's signal mask to block these signals
+ * @param block_mask Pointer a signal set
+ */
 void blockSIGTSTP(sigset_t *block_mask)
 {
     if (sigemptyset(block_mask))
@@ -496,6 +548,10 @@ void blockSIGTSTP(sigset_t *block_mask)
     }
 }
 
+/**
+ * Removes the SIGTSTP signal from a signal set and changes calling thread's signal mask to unblock these signals
+ * @param block_mask Pointer a signal set
+ */
 void unblockSIGTSTP(sigset_t *block_mask)
 {
     if (sigprocmask(SIG_UNBLOCK, block_mask, NULL))
@@ -505,6 +561,10 @@ void unblockSIGTSTP(sigset_t *block_mask)
     }
 }
 
+/**
+ * Redirects input/output from stdin/stdout to the input/output files specified in the Command struct
+ * @param command Pointer to the struct containing the parsed command line input
+ */
 void redirectIO(Command *command)
 {
     if (command->inputFile)
