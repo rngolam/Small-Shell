@@ -216,7 +216,7 @@ void registerChildSignalHandlers(Command *command)
  * Handler function for SIGTSTP signals. Note that all catchable signals are blocked during execution.
  * @param signo The signal number
  */
-void handle_SIGTSTP(__attribute__ ((unused)) int signo)
+void handle_SIGTSTP(__attribute__((unused)) int signo)
 {
     // Note: All signals are blocked during execution signal handler in the registerParentSignalHandlers function
 
