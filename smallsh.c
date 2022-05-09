@@ -42,7 +42,7 @@ typedef struct Command
 
 // Global variables
 static pid_t backgroundProcesses[MAX_NUM_BACKGROUND_PROCESSES];
-static char statusMessage[25];
+static int childStatus;
 static volatile sig_atomic_t foregroundMode;
 
 // Function prototypes
@@ -54,7 +54,6 @@ void parseCommand(char *, Command *);
 void cleanUpBackgroundProcesses();
 void killBackgroundProcesses();
 void changeDirectory(char *);
-void updateStatusMessage(int *);
 void printStatus();
 void executeCommand(Command *);
 void blockSIGTSTP(sigset_t *);
@@ -66,9 +65,6 @@ int main(void)
 {
     // Register signal handlers
     registerParentSignalHandlers();
-
-    // Initialize default status message
-    sprintf(statusMessage, "%s %d", EXITED_MESSAGE, 0);
 
     pid_t pid = getpid();
 
@@ -98,7 +94,7 @@ int main(void)
         char *firstArg = command->args[0];
 
         // Handle blank lines and comments
-        if (firstArg == NULL || firstArg[0] == '#')
+        if (!firstArg || firstArg[0] == '#')
         {
             cleanUpBackgroundProcesses();
             free(userInput);
@@ -107,7 +103,7 @@ int main(void)
         }
 
         // Handle exit command
-        else if (strcmp(firstArg, EXIT) == 0)
+        else if (!strcmp(firstArg, EXIT))
         {
             killBackgroundProcesses();
             free(userInput);
@@ -116,13 +112,13 @@ int main(void)
         }
 
         // Handle cd command
-        else if (strcmp(firstArg, CHANGE_DIRECTORY) == 0)
+        else if (!strcmp(firstArg, CHANGE_DIRECTORY))
         {
             changeDirectory(command->args[1]);
         }
 
         // Handle status command
-        else if (strcmp(firstArg, STATUS) == 0)
+        else if (!strcmp(firstArg, STATUS))
         {
             printStatus();
         }
@@ -351,13 +347,12 @@ void parseCommand(char *userInput, Command *command)
 void cleanUpBackgroundProcesses()
 {
     pid_t childPid;
-    int childStatus;
 
     // Reap child processes that have terminated
     while ((childPid = waitpid(-1, &childStatus, WNOHANG)) > 0)
     {
-        updateStatusMessage(&childStatus);
-        fprintf(stdout, "background pid %d is done: %s\n", childPid, statusMessage);
+        fprintf(stdout, "background pid %d is done: ", childPid);
+        printStatus();
         fflush(stdout);
 
         // Search for terminated childPid and remove it from array
@@ -412,28 +407,18 @@ void changeDirectory(char *path)
 }
 
 /**
- * Updates the global status string with information about the most recently ended child process
- * @param childStatus A pointer to an integer containing status information about the most recently ended
- * child process
- */
-void updateStatusMessage(int *childStatus)
-{
-    if (WIFEXITED(*childStatus))
-    {
-        sprintf(statusMessage, "%s %d", EXITED_MESSAGE, WEXITSTATUS(*childStatus));
-    }
-    else if (WIFSIGNALED(*childStatus))
-    {
-        sprintf(statusMessage, "%s %d", TERMINATED_MESSAGE, WTERMSIG(*childStatus));
-    }
-}
-
-/**
  * Displays information about the most recently ended child process
  */
 void printStatus()
 {
-    fprintf(stdout, "%s\n", statusMessage);
+    if (WIFEXITED(childStatus))
+    {
+        fprintf(stdout, "%s %d\n", EXITED_MESSAGE, WEXITSTATUS(childStatus));
+    }
+    else
+    {
+        fprintf(stdout, "%s %d\n", TERMINATED_MESSAGE, WTERMSIG(childStatus));
+    }
     fflush(stdout);
 }
 
@@ -445,7 +430,6 @@ void printStatus()
  */
 void executeCommand(Command *command)
 {
-    int childStatus;
     pid_t spawnPid = fork();
     pid_t backgroundProcessIterator = 0;
 
@@ -506,8 +490,6 @@ void executeCommand(Command *command)
         // Update information about finished foreground process
         if (!command->runInBackground)
         {
-            updateStatusMessage(&childStatus);
-
             // Immediately print out status message for foreground processes killed by a signal
             if (WIFSIGNALED(childStatus))
             {

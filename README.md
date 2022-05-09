@@ -1,6 +1,6 @@
 # Smallsh (Small Shell)
 
-A custom interactive shell implementing a subset of well-known shell features. Written in C.
+A custom, interactive shell implementing a subset of well-known UNIX shell features. Written in C.
 
 ## Features
 
