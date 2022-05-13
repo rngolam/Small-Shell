@@ -59,7 +59,6 @@ void executeCommand(Command *);
 void blockSIGTSTP(sigset_t *);
 void unblockSIGTSTP(sigset_t *);
 void redirectIO(Command *);
-void printDiagnosticArgsParsingResults(Command *);
 
 int main(void)
 {
