@@ -311,13 +311,13 @@ void parseCommand(char *userInput, Command *command)
     while ((token = strtok(NULL, " ")))
     {
         // Redirect input
-        if (strcmp(token, REDIRECT_INPUT) == 0)
+        if (!strcmp(token, REDIRECT_INPUT))
         {
             command->inputFile = strtok(NULL, " ");
         }
 
         // Redirect output
-        else if (strcmp(token, REDIRECT_OUTPUT) == 0)
+        else if (!strcmp(token, REDIRECT_OUTPUT))
         {
             command->outputFile = strtok(NULL, " ");
         }
