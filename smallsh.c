@@ -213,8 +213,6 @@ void registerChildSignalHandlers(Command *command)
  */
 void handle_SIGTSTP(__attribute__((unused)) int signo)
 {
-    // Note: All signals are blocked during execution signal handler in the registerParentSignalHandlers function
-
     char *message = foregroundMode ? EXIT_FOREGROUND_MODE_MESSAGE : ENTER_FOREGROUND_MODE_MESSAGE;
     int n = foregroundMode ? EXIT_FOREGROUND_MODE_MESSAGE_LENGTH : ENTER_FOREGROUND_MODE_MESSAGE_LENGTH;
 
