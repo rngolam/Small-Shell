@@ -392,7 +392,7 @@ void killBackgroundProcesses()
 void changeDirectory(char *path)
 {
     // Change to home directory if no path is specified
-    if (path == NULL)
+    if (!path)
     {
         path = getenv(HOME);
     }
@@ -442,7 +442,6 @@ void executeCommand(Command *command)
 
     // In child process
     case 0:
-
         redirectIO(command);
         registerChildSignalHandlers(command);
 
@@ -455,7 +454,6 @@ void executeCommand(Command *command)
 
     // In parent process
     default:
-
         // Temporarily block SIGTSTP signals
         blockSIGTSTP(&block_mask);
 
@@ -463,7 +461,7 @@ void executeCommand(Command *command)
         if (command->runInBackground)
         {
             // Add background process to first empty array index
-            while (backgroundProcesses[backgroundProcessIterator] != 0 && backgroundProcessIterator < MAX_NUM_BACKGROUND_PROCESSES)
+            while (backgroundProcesses[backgroundProcessIterator] && backgroundProcessIterator < MAX_NUM_BACKGROUND_PROCESSES)
             {
                 backgroundProcessIterator++;
             }
@@ -484,19 +482,14 @@ void executeCommand(Command *command)
         // If run in the background, the WNOHANG flag is set and waitpid immediately returns 0
         spawnPid = waitpid(spawnPid, &childStatus, command->runInBackground ? WNOHANG : 0);
 
-        // Update information about finished foreground process
-        if (!command->runInBackground)
+        // Immediately print out status message for foreground processes killed by a signal
+        if (!command->runInBackground && WIFSIGNALED(childStatus))
         {
-            // Immediately print out status message for foreground processes killed by a signal
-            if (WIFSIGNALED(childStatus))
-            {
-                printStatus();
-            }
+            printStatus();
         }
 
         // Unblock SIGTSTP signals (any signals blocked during foreground process will be processed by handler)
         unblockSIGTSTP(&block_mask);
-
         break;
     }
 }
